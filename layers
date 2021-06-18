@@ -1,0 +1,28 @@
+'''
+The affine-to-field layer is aimed at converting the affine transformation outputted by the network in the shape of D×D+1 to its corresponding Dense Displacement Field (DDF) in the shape of IR×IC×2 where D, IR and IC are the number of image dimensions, the number of image rows, and image columns, respectively. Such an affine-to-field layer enabled us exploiting a regularization term to penalize unlikely affine transformations produced by the network while without the layer, it could not be possible.
+
+if using the code please cite the following article that introduces this customized layer:
+H. R. Boveiri, R. Khayami, R. Javidan, A. R. Mehdizadeh, S. Abbasi, "Regularization-based Deep Unsupervised Model for Affine Multimodal co-Registration," Expert Systems, Submitted, 2021.
+'''
+class Affine2Field(Layer):
+    def __init__(self, output_dim=256, **kwargs):
+        self.output_dim = output_dim
+        super(Affine2Field, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+        super(Affine2Field, self).build(input_shape)
+
+    def call(self, input_data):
+        fun = lambda x: neuron.utils.affine_to_shift(x, [256,256], shift_center=True)
+        aff_field = tf.map_fn(fun, input_data)
+        #input_data = tf.reshape(input_data,(2,3))
+        #aff_field = neuron.utils.affine_to_shift(input_data, (256, 256), shift_center=True)
+        return aff_field
+
+    def compute_output_shape(self, input_shape):
+        return (self.output_dim, self.output_dim, 2)
+
+    def get_config(self):
+        config = {'output_dim': self.output_dim}
+        base_config = super(Affine2Field, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
