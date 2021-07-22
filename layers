@@ -4,6 +4,7 @@ The affine-to-field layer is aimed at converting the affine transformation outpu
 if using the code please cite the following article that introduces this customized layer:
 H. R. Boveiri, R. Khayami, R. Javidan, A. R. Mehdizadeh, S. Abbasi, "Regularization-based Deep Unsupervised Model for Affine Multimodal co-Registration," Expert Systems, Submitted, 2021.
 '''
+
 class Affine2Field(Layer):
     def __init__(self, output_dim=256, **kwargs):
         self.output_dim = output_dim
@@ -13,7 +14,7 @@ class Affine2Field(Layer):
         super(Affine2Field, self).build(input_shape)
 
     def call(self, input_data):
-        fun = lambda x: neuron.utils.affine_to_shift(x, [256,256], shift_center=True)
+        fun = lambda x: affine_to_shift(x, [256,256], shift_center=True)
         aff_field = tf.map_fn(fun, input_data)
         #input_data = tf.reshape(input_data,(2,3))
         #aff_field = neuron.utils.affine_to_shift(input_data, (256, 256), shift_center=True)
@@ -26,3 +27,60 @@ class Affine2Field(Layer):
         config = {'output_dim': self.output_dim}
         base_config = super(Affine2Field, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
+
+
+def affine_to_shift(affine_matrix, volshape, shift_center=True, indexing='ij'):
+    """
+    transform an affine matrix to a dense location shift tensor in tensorflow
+
+    Parameters:
+        affine_matrix: ND+1 x ND+1 or ND x ND+1 matrix (Tensor)
+        volshape: 1xN Nd Tensor of the size of the volume.
+        shift_center (optional)
+
+    Returns:
+        shift field (Tensor) of size *volshape x N
+    """
+
+    if isinstance(volshape, (tf.Dimension, tf.TensorShape)):
+        volshape = volshape.as_list()
+    
+    if affine_matrix.dtype != 'float32':
+        affine_matrix = tf.cast(affine_matrix, 'float32')
+
+    nb_dims = len(volshape)
+
+    if len(affine_matrix.shape) == 1:
+        #if len(affine_matrix) != (nb_dims * (nb_dims + 1)) :
+        #    raise ValueError('transform is supposed a vector of len ndims * (ndims + 1).'
+        #                     'Got len %d' % len(affine_matrix))
+        affine_matrix = tf.reshape(affine_matrix, [nb_dims, nb_dims + 1])
+
+    if not (affine_matrix.shape[0] in [nb_dims, nb_dims + 1] and affine_matrix.shape[1] == (nb_dims + 1)):
+        raise Exception('Affine matrix shape should match'
+                        '%d+1 x %d+1 or ' % (nb_dims, nb_dims) + \
+                        '%d x %d+1.' % (nb_dims, nb_dims) + \
+                        'Got: ' + str(volshape))
+
+    # list of volume ndgrid
+    # N-long list, each entry of shape volshape
+    mesh = volshape_to_meshgrid(volshape, indexing=indexing)  
+    mesh = [tf.cast(f, 'float32') for f in mesh]
+    
+    if shift_center:
+        mesh = [mesh[f] - (volshape[f]-1)/2 for f in range(len(volshape))]
+
+    # add an all-ones entry and transform into a large matrix
+    flat_mesh = [flatten(f) for f in mesh]
+    flat_mesh.append(tf.ones(flat_mesh[0].shape, dtype='float32'))
+    mesh_matrix = tf.transpose(tf.stack(flat_mesh, axis=1))  # 4 x nb_voxels
+
+    # compute locations
+    loc_matrix = tf.matmul(affine_matrix, mesh_matrix)  # N+1 x nb_voxels
+    loc_matrix = tf.transpose(loc_matrix[:nb_dims, :])  # nb_voxels x N
+    loc = tf.reshape(loc_matrix, list(volshape) + [nb_dims])  # *volshape x N
+    # loc = [loc[..., f] for f in range(nb_dims)]  # N-long list, each entry of shape volshape
+
+    # get shifts and return
+    return loc - tf.stack(mesh, axis=nb_dims)
+
